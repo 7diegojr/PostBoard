@@ -1,13 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function FormularioScreen() {
+export default function SobreScreen() {
     return (
         <View style={styles.container}>
-            <Text style={styles.titulo}>Novo Post</Text>
-            <Text style={styles.subtitulo}>
-                O formulário de criação será implementado no Módulo 4.
-            </Text>
+            <Text style={styles.titulo}>PostBoard</Text>
+            <Text style={styles.info}>Versão 1.0.0</Text>
+            <Text style={styles.info}>Desenvolvido por Diego 3°MTEC</Text>
         </View>
     );
 }
@@ -26,9 +25,8 @@ const styles = StyleSheet.create({
         color: '#1e3a5f',
         marginBottom: 8
     },
-    subtitulo: {
+    info: {
         fontSize: 15,
-        color: '#6b7280',
-        textAlign: 'center'
+        color: '#6b7280'
     },
 });
