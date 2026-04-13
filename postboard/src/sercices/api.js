@@ -29,14 +29,13 @@ export async function getPosts() {
     return requisicao('/posts?_limit=20');
 }
 
-// Busca um post pelo ID
-export async function getPostsPorUsuario(userId, page = 1, limit = 10) {
-    return requisicao(`/posts?userId=${userId}&_page=${page}&_limit=${limit}`);
-}
-
-// Busca um post pelo ID do usuário
-export async function getPostsPorUsuario(userId) {
-    return requisicao(`/posts?userId=${userId}`)
+// Busca posts de um usuário com suporte a paginação
+// Sem page/limit, retorna todos os posts do usuário
+export async function getPostsPorUsuario(userId, page, limit) {
+    if (page && limit) {
+        return requisicao(`/posts?userId=${userId}&_page=${page}&_limit=${limit}`);
+    }
+    return requisicao(`/posts?userId=${userId}`);
 }
 
 // Cria um novo post

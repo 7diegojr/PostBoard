@@ -3,7 +3,8 @@ import {
     View, Text, FlatList, StyleSheet,
     TouchableOpacity, RefreshControl,
 } from 'react-native';
-import { getPostsPorUsuario } from '../services/api';
+import { getPosts } from '../services/api';
+import { salvar, ler, lerMesmoExpirado, CHAVES } from '../storage/cache';
 import PostCard from '../components/PostCard';
 import LoadingIndicator from '../components/LoadingIndicator';
 import EmptyState from '../components/EmptyState';
@@ -13,9 +14,8 @@ export default function FeedScreen({ navigation }) {
     const [loading, setLoading] = useState(true);
     const [erro, setErro] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
-
-    const [page, setPage] = useState(1);
-    const [loadingMore, setLoadingMore] = useState(false);
+    // fonteOffline: true quando estamos exibindo dados do cache expirado
+    const [fonteOffline, setFonteOffline] = useState(false);
 
     useLayoutEffect(() => {
         navigation.setOptions({
@@ -34,76 +34,59 @@ export default function FeedScreen({ navigation }) {
         carregarPosts();
     }, []);
 
-    // ── PRIMEIRA CARGA ───────────────────────────────
+    // ── Estratégia cache-first ────────────────────────────
     async function carregarPosts() {
         try {
             setLoading(true);
             setErro(null);
 
-            const dados = await getPostsPorUsuario(1, 1);
+            // 1. Tenta cache válido (não expirado)
+            const cacheValido = await ler(CHAVES.POSTS);
+            if (cacheValido) {
+                setPosts(cacheValido);
+                setFonteOffline(false);
+                setLoading(false);
+                return;
+            }
 
+            // 2. Cache vazio ou expirado — busca na API
+            const dados = await getPosts();
             setPosts(dados);
-            setPage(1);
-
-            navigation.setOptions({
-                title: `PostBoard (${dados.length})`,
-            });
+            await salvar(CHAVES.POSTS, dados);
+            setFonteOffline(false);
 
         } catch (e) {
-            setErro('Não foi possível carregar os posts.\nVerifique sua conexão.');
+            // 3. API falhou — tenta cache antigo (mesmo expirado)
+            const cacheAntigo = await lerMesmoExpirado(CHAVES.POSTS);
+            if (cacheAntigo) {
+                setPosts(cacheAntigo);
+                setFonteOffline(true);
+            } else {
+                setErro('Sem conexão e sem dados em cache.\nVerifique sua internet.');
+            }
         } finally {
             setLoading(false);
         }
     }
 
-    // ── CARREGAR MAIS (PAGINAÇÃO) ────────────────────
-    async function carregarMais() {
-        try {
-            setLoadingMore(true);
-
-            const proximaPagina = page + 1;
-
-            const novosDados = await getPostsPorUsuario(1, proximaPagina);
-
-            setPosts(prev => [...prev, ...novosDados]);
-            setPage(proximaPagina);
-
-            navigation.setOptions({
-                title: `PostBoard (${posts.length + novosDados.length})`,
-            });
-
-        } catch (e) {
-            console.error('Erro ao carregar mais:', e);
-        } finally {
-            setLoadingMore(false);
-        }
-    }
-
-    // ── REFRESH ─────────────────────────────────────
+    // ── Pull-to-refresh: força atualização da API ─────────
     async function onRefresh() {
         try {
             setRefreshing(true);
             setErro(null);
-
-            const dados = await getPostsPorUsuario(1, 1);
-
+            // Ao puxar para atualizar, ignora cache e vai direto à API
+            const dados = await getPosts();
             setPosts(dados);
-            setPage(1);
-
-            navigation.setOptions({
-                title: `PostBoard (${dados.length})`,
-            });
-
+            await salvar(CHAVES.POSTS, dados);
+            setFonteOffline(false);
         } catch (e) {
-            setErro('Erro ao atualizar.');
+            setErro('Não foi possível atualizar. Verifique sua conexão.');
         } finally {
             setRefreshing(false);
         }
     }
 
-    if (loading) {
-        return <LoadingIndicator mensagem="Carregando posts..." />;
-    }
+    if (loading) return <LoadingIndicator mensagem="Carregando posts..." />;
 
     if (erro && posts.length === 0) {
         return (
@@ -119,6 +102,15 @@ export default function FeedScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
+            {/* Banner de aviso quando os dados vêm do cache offline */}
+            {fonteOffline && (
+                <View style={styles.bannerOffline}>
+                    <Text style={styles.bannerTexto}>
+                        📡 Sem internet — exibindo dados salvos anteriormente
+                    </Text>
+                </View>
+            )}
+
             <FlatList
                 data={posts}
                 keyExtractor={(item) => String(item.id)}
@@ -128,28 +120,9 @@ export default function FeedScreen({ navigation }) {
                         onPress={() => navigation.navigate('Detalhes', { post: item })}
                     />
                 )}
-
                 ListEmptyComponent={
-                    <EmptyState
-                        icone="📭"
-                        titulo="Nenhum post encontrado"
-                        mensagem="A lista está vazia no momento."
-                    />
+                    <EmptyState icone="📭" titulo="Nenhum post encontrado" mensagem="A lista está vazia." />
                 }
-
-                // BOTÃO "CARREGAR MAIS"
-                ListFooterComponent={
-                    <TouchableOpacity
-                        style={styles.botaoCarregarMais}
-                        onPress={carregarMais}
-                        disabled={loadingMore}
-                    >
-                        <Text style={styles.textoCarregarMais}>
-                            {loadingMore ? 'Carregando...' : 'Carregar mais'}
-                        </Text>
-                    </TouchableOpacity>
-                }
-
                 refreshControl={
                     <RefreshControl
                         refreshing={refreshing}
@@ -158,12 +131,8 @@ export default function FeedScreen({ navigation }) {
                         tintColor="#1a56db"
                     />
                 }
-
-                contentContainerStyle={
-                    posts.length === 0 ? styles.listaVazia : styles.lista
-                }
-
-                ItemSeparatorComponent={() => <View style={styles.separador} />}
+                contentContainerStyle={posts.length === 0 ? styles.listaVazia : styles.lista}
+                ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
             />
         </View>
     );
@@ -172,31 +141,27 @@ export default function FeedScreen({ navigation }) {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f3f4f6',
+        backgroundColor: '#f3f4f6'
     },
     lista: {
         padding: 16,
-        paddingBottom: 32,
+        paddingBottom: 32
     },
     listaVazia: {
         flex: 1,
-        justifyContent: 'center',
+        justifyContent: 'center'
     },
-    separador: {
-        height: 12,
+    bannerOffline: {
+        backgroundColor: '#fef3c7',
+        borderBottomWidth: 1,
+        borderBottomColor: '#fcd34d',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
     },
-
-    // ESTILO DO BOTÃO
-    botaoCarregarMais: {
-        backgroundColor: '#e5e7eb',
-        padding: 14,
-        borderRadius: 10,
-        alignItems: 'center',
-        marginTop: 10,
-    },
-    textoCarregarMais: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#1f2937',
+    bannerTexto: {
+        fontSize: 13,
+        color: '#92400e',
+        textAlign: 'center',
+        fontWeight: '500',
     },
 });

@@ -4,6 +4,7 @@ import {
     TouchableOpacity, Alert,
 } from 'react-native';
 import { getUsuarioPorId, deletarPost } from '../services/api';
+import { salvar, ler, lerMesmoExpirado, CHAVES } from '../storage/cache';
 import LoadingIndicator from '../components/LoadingIndicator';
 
 export default function DetalhesScreen({ navigation, route }) {
@@ -23,14 +24,32 @@ export default function DetalhesScreen({ navigation, route }) {
     useEffect(() => {
         async function carregarAutor() {
             try {
+                // 1. Verifica cache do usuário específico
+                const chaveUsuario = CHAVES.USUARIO(post.userId);
+                const cacheUsuario = await ler(chaveUsuario);
+
+                if (cacheUsuario) {
+                    setUsuario(cacheUsuario);
+                    setLoading(false);
+                    return;
+                }
+
+                // 2. Cache vazio ou expirado — busca na API
                 const dados = await getUsuarioPorId(post.userId);
                 setUsuario(dados);
-                setErroAutor(null); // limpa erro se funcionar
-            } catch (e) {
-                console.warn('Não foi possível carregar o autor:', e.message);
+                setErroAutor(null);
+                await salvar(chaveUsuario, dados); // TTL de 5 min
 
-                // ✅ NOVO: salva erro para exibir na tela
-                setErroAutor('Não foi possível carregar as informações do autor.');
+            } catch (e) {
+                // 3. Tenta cache expirado antes de desistir
+                const chaveUsuario = CHAVES.USUARIO(post.userId);
+                const cacheAntigo = await lerMesmoExpirado(chaveUsuario);
+                if (cacheAntigo) {
+                    setUsuario(cacheAntigo);
+                } else {
+                    console.warn('Autor indisponível:', e.message);
+                    setErroAutor('Não foi possível carregar as informações do autor.');
+                }
             } finally {
                 setLoading(false);
             }
